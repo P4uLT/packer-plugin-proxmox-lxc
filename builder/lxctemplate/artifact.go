@@ -1,4 +1,4 @@
-package scaffolding
+package lxctemplate
 
 // packersdk.Artifact implementation
 type Artifact struct {

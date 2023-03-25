@@ -1,4 +1,4 @@
-package scaffolding
+package lxctemplate
 
 import (
 	_ "embed"
@@ -13,20 +13,20 @@ import (
 )
 
 //go:embed test-fixtures/template.pkr.hcl
-var testPostProcessorHCL2Basic string
+var testBuilderHCL2Basic string
 
-// Run with: PACKER_ACC=1 go test -count 1 -v ./post-processor/scaffolding/post-processor_acc_test.go  -timeout=120m
-func TestAccScaffoldingPostProcessor(t *testing.T) {
+// Run with: PACKER_ACC=1 go test -count 1 -v ./builder/lxctemplate/builder_acc_test.go  -timeout=120m
+func TestAcclxctemplateBuilder(t *testing.T) {
 	testCase := &acctest.PluginTestCase{
-		Name: "scaffolding_post-processor_basic_test",
+		Name: "lxctemplate_builder_basic_test",
 		Setup: func() error {
 			return nil
 		},
 		Teardown: func() error {
 			return nil
 		},
-		Template: testPostProcessorHCL2Basic,
-		Type:     "scaffolding-my-post-processor",
+		Template: testBuilderHCL2Basic,
+		Type:     "proxmox-lxc-lxctemplate",
 		Check: func(buildCommand *exec.Cmd, logfile string) error {
 			if buildCommand.ProcessState != nil {
 				if buildCommand.ProcessState.ExitCode() != 0 {
@@ -46,8 +46,8 @@ func TestAccScaffoldingPostProcessor(t *testing.T) {
 			}
 			logsString := string(logsBytes)
 
-			postProcessorOutputLog := "post-processor mock: my-mock-config"
-			if matched, _ := regexp.MatchString(postProcessorOutputLog+".*", logsString); !matched {
+			buildGeneratedDataLog := "proxmox-lxc-lxctemplate.basic-example: build generated data: mock-build-data"
+			if matched, _ := regexp.MatchString(buildGeneratedDataLog+".*", logsString); !matched {
 				t.Fatalf("logs doesn't contain expected foo value %q", logsString)
 			}
 			return nil

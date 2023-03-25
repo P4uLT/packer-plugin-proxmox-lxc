@@ -1,10 +1,10 @@
-source "scaffolding-my-builder" "basic-example" {
+source "proxmox-lxc-lxctemplate" "basic-example" {
   mock = "mock-config"
 }
 
 build {
   sources = [
-    "source.scaffolding-my-builder.basic-example"
+    "source.proxmox-lxc-lxctemplate.basic-example"
   ]
 
   provisioner "shell-local" {
