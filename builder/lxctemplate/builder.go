@@ -1,6 +1,6 @@
 //go:generate packer-sdc mapstructure-to-hcl2 -type Config
 
-package scaffolding
+package lxctemplate
 
 import (
 	"context"
