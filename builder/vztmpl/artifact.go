@@ -1,4 +1,4 @@
-package lxctemplate
+package vztmpl
 
 import (
 	"fmt"

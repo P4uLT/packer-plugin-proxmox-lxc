@@ -1,4 +1,4 @@
-package lxctemplate
+package vztmpl
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 	packersdk "github.com/hashicorp/packer-plugin-sdk/packer"
 )
 
-const BuilderId = "proxmox-lxc.builder"
+const BuilderId = "vztmpl.builder"
 
 type Builder struct {
 	config        Config
