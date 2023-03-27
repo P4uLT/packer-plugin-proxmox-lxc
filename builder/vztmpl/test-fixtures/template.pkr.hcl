@@ -1,10 +1,10 @@
-source "proxmox-lxc-lxctemplate" "basic-example" {
+source "proxmox-lxc-vztmpl" "basic-example" {
   mock = "mock-config"
 }
 
 build {
   sources = [
-    "source.proxmox-lxc-lxctemplate.basic-example"
+    "source.proxmox-lxc-vztmpl.basic-example"
   ]
 
   provisioner "shell-local" {
