@@ -89,6 +89,7 @@ type FlatConfig struct {
 	Cores                     *int              `mapstructure:"cores" cty:"cores" hcl:"cores"`
 	Unprivileged              *bool             `mapstructure:"unprivileged" cty:"unprivileged" hcl:"unprivileged"`
 	TemplateFile              *string           `mapstructure:"template_file" cty:"template_file" hcl:"template_file"`
+	TemplateSuffix            *string           `mapstructure:"template_suffix" cty:"template_suffix" hcl:"template_suffix"`
 	TemplateStoragePool       *string           `mapstructure:"template_storage_pool" cty:"template_storage_pool" hcl:"template_storage_pool"`
 	BackupStoragePool         *string           `mapstructure:"backup_storage_pool" cty:"backup_storage_pool" hcl:"backup_storage_pool"`
 	FSStorage                 *string           `mapstructure:"filesystem_storage" cty:"filesystem_storage" hcl:"filesystem_storage"`
@@ -97,9 +98,6 @@ type FlatConfig struct {
 	ProvisionIP               *string           `mapstructure:"provision_ip" cty:"provision_ip" hcl:"provision_ip"`
 	ProvisionGatewayIP        *string           `mapstructure:"provision_gateway_ip" cty:"provision_gateway_ip" hcl:"provision_gateway_ip"`
 	ProvisionMac              *string           `mapstructure:"provision_mac" cty:"provision_mac" hcl:"provision_mac"`
-	ProvisionPort             *int              `mapstructure:"provision_port" cty:"provision_port" hcl:"provision_port"`
-	ProvisionPrivateKeyPath   *string           `mapstructure:"provision_private_key_file" cty:"provision_private_key_file" hcl:"provision_private_key_file"`
-	ProvisionPassword         *string           `mapstructure:"provision_password" cty:"provision_password" hcl:"provision_password"`
 }
 
 // FlatMapstructure returns a new FlatConfig.
@@ -193,6 +191,7 @@ func (*FlatConfig) HCL2Spec() map[string]hcldec.Spec {
 		"cores":                        &hcldec.AttrSpec{Name: "cores", Type: cty.Number, Required: false},
 		"unprivileged":                 &hcldec.AttrSpec{Name: "unprivileged", Type: cty.Bool, Required: false},
 		"template_file":                &hcldec.AttrSpec{Name: "template_file", Type: cty.String, Required: false},
+		"template_suffix":              &hcldec.AttrSpec{Name: "template_suffix", Type: cty.String, Required: false},
 		"template_storage_pool":        &hcldec.AttrSpec{Name: "template_storage_pool", Type: cty.String, Required: false},
 		"backup_storage_pool":          &hcldec.AttrSpec{Name: "backup_storage_pool", Type: cty.String, Required: false},
 		"filesystem_storage":           &hcldec.AttrSpec{Name: "filesystem_storage", Type: cty.String, Required: false},
@@ -201,9 +200,6 @@ func (*FlatConfig) HCL2Spec() map[string]hcldec.Spec {
 		"provision_ip":                 &hcldec.AttrSpec{Name: "provision_ip", Type: cty.String, Required: false},
 		"provision_gateway_ip":         &hcldec.AttrSpec{Name: "provision_gateway_ip", Type: cty.String, Required: false},
 		"provision_mac":                &hcldec.AttrSpec{Name: "provision_mac", Type: cty.String, Required: false},
-		"provision_port":               &hcldec.AttrSpec{Name: "provision_port", Type: cty.Number, Required: false},
-		"provision_private_key_file":   &hcldec.AttrSpec{Name: "provision_private_key_file", Type: cty.String, Required: false},
-		"provision_password":           &hcldec.AttrSpec{Name: "provision_password", Type: cty.String, Required: false},
 	}
 	return s
 }

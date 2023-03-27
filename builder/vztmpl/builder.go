@@ -112,35 +112,8 @@ func (b *Builder) Run(ctx context.Context, ui packersdk.Ui, hook packersdk.Hook)
 }
 
 // Returns ssh_host or winrm_host (see communicator.Config.Host) config
-// parameter when set, otherwise gets the host IP from running VM
 func commHost(host string) func(state multistep.StateBag) (string, error) {
-	if host != "" {
-		return func(state multistep.StateBag) (string, error) {
-			return host, nil
-		}
+	return func(state multistep.StateBag) (string, error) {
+		return host, nil
 	}
-	return getVMIP
-}
-
-// Reads the first non-loopback interface's IP address from the VM.
-// qemu-guest-agent package must be installed on the VM
-func getVMIP(state multistep.StateBag) (string, error) {
-	client := state.Get("proxmoxClient").(*proxmox.Client)
-	vmRef := state.Get("vmRef").(*proxmox.VmRef)
-
-	ifs, err := client.GetVmAgentNetworkInterfaces(vmRef)
-	if err != nil {
-		return "", err
-	}
-
-	for _, iface := range ifs {
-		for _, addr := range iface.IPAddresses {
-			if addr.IsLoopback() {
-				continue
-			}
-			return addr.String(), nil
-		}
-	}
-
-	return "", fmt.Errorf("found no IP addresses on VM")
 }

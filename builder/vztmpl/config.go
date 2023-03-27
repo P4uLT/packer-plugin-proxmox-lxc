@@ -1,3 +1,5 @@
+//go:generate packer-sdc struct-markdown
+
 //go:generate packer-sdc mapstructure-to-hcl2 -type Config
 
 package vztmpl
@@ -38,22 +40,21 @@ type Config struct {
 	Pool               string        `mapstructure:"pool"`
 	TaskTimeout        time.Duration `mapstructure:"task_timeout"`
 
-	Memory              int    `mapstructure:"memory"`
-	Cores               int    `mapstructure:"cores"`
-	Unprivileged        bool   `mapstructure:"unprivileged"`
-	TemplateFile        string `mapstructure:"template_file"`
+	Memory         int    `mapstructure:"memory"`
+	Cores          int    `mapstructure:"cores"`
+	Unprivileged   bool   `mapstructure:"unprivileged"`
+	TemplateFile   string `mapstructure:"template_file"`
+	TemplateSuffix string `mapstructure:"template_suffix"`
+
 	TemplateStoragePool string `mapstructure:"template_storage_pool"`
 	BackupStoragePool   string `mapstructure:"backup_storage_pool"`
 	FSStorage           string `mapstructure:"filesystem_storage"`
 	FSSize              int    `mapstructure:"filesystem_size"`
 	VMID                int    `mapstructure:"vmid"`
 
-	ProvisionIP             string `mapstructure:"provision_ip"`
-	ProvisionGatewayIP      string `mapstructure:"provision_gateway_ip"`
-	ProvisionMac            string `mapstructure:"provision_mac"`
-	ProvisionPort           int    `mapstructure:"provision_port"`
-	ProvisionPrivateKeyPath string `mapstructure:"provision_private_key_file"`
-	ProvisionPassword       string `mapstructure:"provision_password"`
+	ProvisionIP        string `mapstructure:"provision_ip"`
+	ProvisionGatewayIP string `mapstructure:"provision_gateway_ip"`
+	ProvisionMac       string `mapstructure:"provision_mac"`
 
 	ctx interpolate.Context
 }
@@ -101,10 +102,6 @@ func (c *Config) Prepare(raws ...interface{}) ([]string, error) {
 		c.Cores = 1
 	}
 
-	if c.ProvisionPort <= 0 {
-		c.ProvisionPort = 22
-	}
-
 	if c.ProvisionMac == "" {
 		c.ProvisionMac = "1e:eb:08:d1:e7:e2"
 	}
@@ -139,6 +136,11 @@ func (c *Config) Prepare(raws ...interface{}) ([]string, error) {
 		errs = packer.MultiErrorAppend(errs, errors.New("filesystem_size must be specified"))
 	}
 
+	if c.TemplateSuffix == "" {
+		errs = packer.MultiErrorAppend(errs, errors.New("template_suffix must be specified"))
+
+	}
+
 	if c.ProvisionIP == "" {
 		errs = packer.MultiErrorAppend(errs, errors.New("provision_ip must be specified"))
 	}
@@ -149,17 +151,7 @@ func (c *Config) Prepare(raws ...interface{}) ([]string, error) {
 	// Set internal values
 	//c.Comm.SSHAgentAuth = true
 
-	if c.ProvisionPrivateKeyPath != "" {
-		c.Comm.SSHPrivateKeyFile = c.ProvisionPrivateKeyPath
-	}
-
-	if c.ProvisionPassword != "" {
-		c.Comm.SSHPassword = c.ProvisionPassword
-	}
-
 	c.Comm.SSHHost = c.ProvisionIP
-	c.Comm.SSHPort = c.ProvisionPort
-	c.Comm.SSHUsername = "root"
 
 	errs = packer.MultiErrorAppend(errs, c.Comm.Prepare(&c.ctx)...)
 	errs = packer.MultiErrorAppend(errs, c.BootConfig.Prepare(&c.ctx)...)

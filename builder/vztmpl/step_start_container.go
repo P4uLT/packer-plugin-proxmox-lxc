@@ -35,7 +35,6 @@ func (s *stepStartContainer) Run(ctx context.Context, state multistep.StateBag) 
 		"storage": c.FSStorage,
 		"size":    strconv.Itoa(c.FSSize) + "G",
 	}
-
 	config.SSHPublicKeys = string(c.Comm.SSHPublicKey)
 	config.Networks = proxmox.QemuDevices{
 		0: {
@@ -90,21 +89,23 @@ func (s *stepStartContainer) Run(ctx context.Context, state multistep.StateBag) 
 	state.Put("vmRef", vmRef)
 	// instance_id is the generic term used so that users can have access to the
 	// instance id inside of the provisioners, used in step_provision.
-	state.Put("instance_id", vmRef)
+	state.Put("instance_id", vmRef.VmId())
 
 	ui.Say("Starting LXC Container")
+	//_, err = client.StartVm(vmRef)
 	_, err = client.StartVm(vmRef)
-	// if err != nil {
-	// 	err := fmt.Errorf("rror starting VM: %s", err)
-	// 	state.Put("error", err)
-	// 	ui.Error(err.Error())
-	// 	return multistep.ActionHalt
-	// }
+	if err != nil {
+		err := fmt.Errorf("error starting VM: %s", err)
+		state.Put("error", err)
+		ui.Error(err.Error())
+		return multistep.ActionHalt
+	}
 
 	return multistep.ActionContinue
 }
 
 type startedVMCleaner interface {
+	CheckVmRef(vmRef *proxmox.VmRef) (err error)
 	StopVm(*proxmox.VmRef) (string, error)
 	DeleteVm(*proxmox.VmRef) (string, error)
 }
@@ -128,9 +129,14 @@ func (s *stepStartContainer) Cleanup(state multistep.StateBag) {
 	client := state.Get("proxmoxClient").(startedVMCleaner)
 	ui := state.Get("ui").(packersdk.Ui)
 
+	err := client.CheckVmRef(vmRef)
+	if err != nil {
+		return
+	}
+
 	// Destroy the server we just created
 	ui.Say("Stopping LXC Container")
-	_, err := client.StopVm(vmRef)
+	_, err = client.StopVm(vmRef)
 	if err != nil {
 		ui.Error(fmt.Sprintf("Error stopping VM. Please stop and delete it manually: %s", err))
 		return

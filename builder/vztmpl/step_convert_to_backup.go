@@ -1,11 +1,9 @@
 package vztmpl
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"fmt"
-	"net/url"
 	"strconv"
 
 	"github.com/hashicorp/packer-plugin-sdk/multistep"
@@ -46,36 +44,21 @@ func (s *stepConvertToBackup) Run(ctx context.Context, state multistep.StateBag)
 		ui.Error(err.Error())
 		return multistep.ActionHalt
 	}
-	var body = url.Values{}
-	body.Add("mode", "stop")
-	body.Add("compress", "gzip")
-	body.Add("remove", "1")
-	body.Add("storage", c.BackupStoragePool)
-	body.Add("vmid", strconv.Itoa(c.VMID))
-	var bodyEncode = bytes.NewBufferString(body.Encode()).Bytes()
 
-	resp, err := session.Post("/nodes/"+c.Node+"/vzdump", nil, nil, &bodyEncode)
-	if err != nil {
-		err := fmt.Errorf("error converting VM to template, failed to create backup: %s", err)
-		state.Put("error", err)
-		ui.Error(err.Error())
-		return multistep.ActionHalt
-	}
-	taskResponse, err := proxmox.ResponseJSON(resp)
-	if err != nil {
-		err := fmt.Errorf("error converting VM to template, faield to parse backup response: %s", err)
-		state.Put("error", err)
-		ui.Error(err.Error())
-		return multistep.ActionHalt
-	}
-	_, err = client.WaitForCompletion(taskResponse)
+	params := make(map[string]interface{})
+	params["mode"] = "stop"
+	params["compress"] = "gzip" //"zstd"
+	params["remove"] = "1"
+	params["storage"] = c.BackupStoragePool
+	params["vmid"] = strconv.Itoa(c.VMID)
+
+	_, err = client.VzDump(vmRef, params)
 	if err != nil {
 		err := fmt.Errorf("error converting VM to template, failed to wait process completion: %s", err)
 		state.Put("error", err)
 		ui.Error(err.Error())
 		return multistep.ActionHalt
 	}
-
 	return multistep.ActionContinue
 }
 
@@ -95,18 +78,24 @@ func (s *stepConvertToBackup) Cleanup(state multistep.StateBag) {
 	}
 
 	client := state.Get("proxmoxClient").(startedVMCleaner)
+
+	err := client.CheckVmRef(vmRef)
+	if err != nil {
+		return 
+	}
+
 	ui := state.Get("ui").(packersdk.Ui)
 
-	// // Destroy the server we just created
-	// ui.Say("Stopping LXC Container")
-	// _, err := client.StopVm(vmRef)
-	// if err != nil {
-	// 	ui.Error(fmt.Sprintf("Error stopping VM. Please stop and delete it manually: %s", err))
-	// 	return
-	// }
+	// Destroy the server we just created
+	ui.Say("Stopping LXC Container")
+	_, err = client.StopVm(vmRef)
+	if err != nil {
+		ui.Error(fmt.Sprintf("Error stopping VM. Please stop and delete it manually: %s", err))
+		return
+	}
 
 	ui.Say("Deleting LXC Container")
-	_, err := client.DeleteVm(vmRef)
+	_, err = client.DeleteVm(vmRef)
 	if err != nil {
 		ui.Error(fmt.Sprintf("Error deleting VM. Please delete it manually: %s", err))
 		return

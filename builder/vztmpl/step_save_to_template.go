@@ -30,7 +30,7 @@ func (s *stepSaveToTemplate) Run(ctx context.Context, state multistep.StateBag) 
 	client := state.Get("proxmoxClient").(*proxmox.Client)
 	vmRef := state.Get("vmRef").(*proxmox.VmRef)
 
-	filename, err := uploadBackup(*client, ui, strings.Replace(c.Username, "@pam", "", 1), c.Password, c.proxmoxURL.Hostname(), 22, c.VMID, c.Node, c.TemplateStoragePool, c.TemplateFile)
+	filename, err := uploadBackup(*client, ui, strings.Replace(c.Username, "@pam", "", 1), c.Password, c.proxmoxURL.Hostname(), 22, c.VMID, c.Node, c.TemplateStoragePool, c.TemplateFile, c.TemplateSuffix)
 	if err != nil {
 		err := fmt.Errorf("error converting VM to template, failed to upload backup: %s", err)
 		state.Put("error", err)
@@ -76,7 +76,7 @@ func (s *stepSaveToTemplate) Cleanup(state multistep.StateBag) {
 
 }
 
-func uploadBackup(prox_client proxmox.Client, ui packersdk.Ui, apiUser string, apiPassword string, apiAddr string, apiPort int, vmId int, node string, templateStoragePool string, templateFile string) (string, error) {
+func uploadBackup(prox_client proxmox.Client, ui packersdk.Ui, apiUser string, apiPassword string, apiAddr string, apiPort int, vmId int, node string, templateStoragePool string, templateFile string, templateSuffix string) (string, error) {
 
 	config := &ssh.ClientConfig{
 		User: apiUser,
@@ -100,7 +100,7 @@ func uploadBackup(prox_client proxmox.Client, ui packersdk.Ui, apiUser string, a
 	defer ftpClient.Close()
 
 	ui.Say("Listing vzdump backup directory for template backup...")
-	dir := "/var/lib/vz/dump/"
+	dir := "/var/lib/vz/dump/" // TODO Get from real path
 	files, err := ftpClient.ReadDir(dir)
 	if err != nil {
 		return "", err
@@ -126,36 +126,30 @@ func uploadBackup(prox_client proxmox.Client, ui packersdk.Ui, apiUser string, a
 	}
 	defer srcFile.Close()
 
-	dstPath := "./out/" + fileName
-
-	ui.Say("Creating local template file " + dstPath + "...")
-	dstFile, err := os.Create(dstPath)
+	ui.Say("Creating temp file to store backup file ...")
+	dstFile, err := os.CreateTemp("", "vztmpl")
 	if err != nil {
 		return "", err
 	}
-
-	defer dstFile.Close()
 
 	ui.Say("Transferring vzdump template backup file to local path...")
 	// write to file
 	if _, err := dstFile.ReadFrom(srcFile); err != nil {
 		return "", err
 	}
+	defer os.Remove(dstFile.Name())
 
-	extension := filepath.Ext(templateFile)
-	name := templateFile[0 : len(templateFile)-len(extension)]
-
-	templateFile = name + "_updated" + extension
-
-	fmt.Println(templateFile)
+	// Define new name
+	name := fileNameWithoutExtension(templateFile)
+	templateFile = name + "_" + templateSuffix + strings.ReplaceAll(templateFile, name, "")
 
 	ui.Say("Upload vzdump template backup " + templateFile + " to " + templateStoragePool + " ...")
-	isoPath, _ := filepath.EvalSymlinks(dstPath)
+	isoPath, _ := filepath.EvalSymlinks(dstFile.Name())
 	r, err := os.Open(isoPath)
 	if err != nil {
 		return "", err
 	}
-	if err := prox_client.Upload(node, templateStoragePool, "vztmpl", dstPath, r); err != nil {
+	if err := prox_client.Upload(node, templateStoragePool, "vztmpl", templateFile, r); err != nil {
 		return "", err
 	}
 
@@ -163,71 +157,10 @@ func uploadBackup(prox_client proxmox.Client, ui packersdk.Ui, apiUser string, a
 }
 
 func fileNameWithoutExtension(fileName string) string {
-	if pos := strings.LastIndexByte(fileName, '.'); pos != -1 {
-		return fileName[:pos]
+	i := 0
+	for i < 2 {
+		fileName = strings.TrimSuffix(filepath.Base(fileName), filepath.Ext(fileName))
+		i = i + 1
 	}
 	return fileName
-}
-
-func downloadBackup(ui packersdk.Ui, apiUser string, apiPassword string, apiAddr string, apiPort int, vmId int, dstPath string) error {
-	config := &ssh.ClientConfig{
-		User: apiUser,
-		Auth: []ssh.AuthMethod{
-			ssh.Password(apiPassword),
-		},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-	}
-
-	var sshAddr string = apiAddr + ":" + strconv.Itoa(apiPort)
-	ui.Say("Establishing SSH connection with [" + apiUser + "] at [" + sshAddr + "] for template file...")
-	client, _ := ssh.Dial("tcp", sshAddr, config)
-	defer client.Close()
-
-	ui.Say("Establishing SFTP connection for template file...")
-	// open an SFTP session over an existing ssh connection.
-	ftpClient, err := sftp.NewClient(client)
-	if err != nil {
-		return err
-	}
-	defer ftpClient.Close()
-
-	ui.Say("Listing vzdump backup directory for template backup...")
-	dir := "/var/lib/vz/dump/"
-	files, err := ftpClient.ReadDir(dir)
-	if err != nil {
-		return err
-	}
-	var srcFilePath = ""
-	for _, file := range files {
-		match, err := regexp.MatchString(`vzdump-lxc-`+strconv.Itoa(vmId)+`-.*?\.tar\.gz`, file.Name())
-		if err == nil && match {
-			srcFilePath = path.Join(dir, file.Name())
-		}
-	}
-
-	if srcFilePath == "" {
-		return fmt.Errorf("could not find backup file for LXC container %d", vmId)
-	}
-
-	ui.Say("Opening vzdump template backup " + srcFilePath + "...")
-	srcFile, err := ftpClient.Open(srcFilePath)
-	if err != nil {
-		return err
-	}
-	defer srcFile.Close()
-
-	ui.Say("Creating local template file " + dstPath + "...")
-	dstFile, err := os.Create(dstPath)
-	if err != nil {
-		return err
-	}
-	defer dstFile.Close()
-
-	ui.Say("Transferring vzdump template backup file to local path...")
-	// write to file
-	if _, err := dstFile.ReadFrom(srcFile); err != nil {
-		return err
-	}
-
-	return nil
 }

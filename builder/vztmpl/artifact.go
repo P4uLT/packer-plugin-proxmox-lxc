@@ -3,7 +3,6 @@ package vztmpl
 import (
 	"fmt"
 	"log"
-	"os"
 
 	"github.com/Telmate/proxmox-api-go/proxmox"
 )
@@ -35,11 +34,13 @@ func (a *Artifact) String() string {
 }
 
 func (a *Artifact) State(name string) interface{} {
-	return a.StateData[name]
+	if _, ok := a.StateData[name]; ok {
+		return a.StateData[name]
+	}
+	return nil
 }
 
 func (a *Artifact) Destroy() error {
 	log.Printf("Destroying template: %s", a.templatePath)
-	err := os.Remove(a.templatePath)
-	return err
+	return nil
 }
