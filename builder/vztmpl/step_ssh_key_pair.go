@@ -26,12 +26,12 @@ func (s *StepSshKeyPair) Run(ctx context.Context, state multistep.StateBag) mult
 	c := state.Get("config").(*Config)
 
 	if c.Comm.SSHPassword != "" {
-		ui.Say("using password for the communicator...")
+		ui.Say("Using password for the communicator...")
 		return multistep.ActionContinue
 	}
 
 	if c.Comm.SSHPrivateKeyFile != "" {
-		ui.Say("using existing SSH private key for the communicator...")
+		ui.Say("Using existing SSH private key for the communicator...")
 		privateKeyBytes, err := c.Comm.ReadSSHPrivateKeyFile()
 		if err != nil {
 			state.Put("error", err)
@@ -56,11 +56,11 @@ func (s *StepSshKeyPair) Run(ctx context.Context, state multistep.StateBag) mult
 	}
 
 	if c.Comm.SSHAgentAuth {
-		ui.Say("using local SSH Agent to authenticate connections for the communicator...")
+		ui.Say("Using local SSH Agent to authenticate connections for the communicator...")
 		return multistep.ActionContinue
 	}
 
-	ui.Say("creating ephemeral key pair for SSH communicator...")
+	ui.Say("Creating ephemeral key pair for SSH communicator...")
 
 	kp, err := ssh.NewKeyPair(ssh.CreateKeyPairConfig{
 		Comment: fmt.Sprintf("packer_%s", uuid.TimeOrderedUUID()),
@@ -76,7 +76,7 @@ func (s *StepSshKeyPair) Run(ctx context.Context, state multistep.StateBag) mult
 	c.Comm.SSHPublicKey = kp.PublicKeyAuthorizedKeysLine
 	c.Comm.SSHClearAuthorizedKeys = true
 
-	ui.Say("created ephemeral SSH key pair for communicator")
+	ui.Say("Created ephemeral SSH key pair for communicator")
 
 	// If we're in debug mode, output the private key to the working
 	// directory.
