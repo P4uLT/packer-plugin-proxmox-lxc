@@ -4,10 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path"
 	"path/filepath"
-	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -25,29 +22,14 @@ import (
 // It sets the template_id state which is used for Artifact lookup.
 type stepSaveToTemplate struct{}
 
-// ByCreationTime implements sort.Interface based on the CreationTime field.
-type ByCreationTime []proxmox.Content_FileProperties
-
-func (a ByCreationTime) Len() int           { return len(a) }
-func (a ByCreationTime) Less(i, j int) bool { return a[i].CreationTime.After(a[j].CreationTime) }
-func (a ByCreationTime) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
-
 func (s *stepSaveToTemplate) Run(ctx context.Context, state multistep.StateBag) multistep.StepAction {
 	ui := state.Get("ui").(packersdk.Ui)
 	c := state.Get("config").(*Config)
 	client := state.Get("proxmoxClient").(*proxmox.Client)
 	vmRef := state.Get("vmRef").(*proxmox.VmRef)
 
-	ui.Say("Finding latest backup for VmId" + strconv.Itoa(vmRef.VmId()) + "in storage :" + c.BackupStoragePool)
-
-	path, err := findLatestBackup(client, c.VMID, c.Node, c.BackupStoragePool)
-	if err != nil {
-		err := fmt.Errorf("error finding latest backup: %s", err)
-		state.Put("error", err)
-		ui.Error(err.Error())
-		return multistep.ActionHalt
-	}
-	ui.Say("Found backup at " + path)
+	backupSrcPath := state.Get("backupSrcPath").(string)
+	extension := state.Get("extension").(string)
 
 	user, err := proxmox.NewUserID(c.Username)
 	if err != nil {
@@ -57,20 +39,45 @@ func (s *stepSaveToTemplate) Run(ctx context.Context, state multistep.StateBag) 
 		return multistep.ActionHalt
 	}
 
-	filename, err := uploadBackup(*client, ui, user.Name, c.Password, c.proxmoxURL.Hostname(), 22, c.VMID, c.Node, c.TemplateStoragePool, c.TemplateFile, c.TemplateSuffix)
+	// Define new name
+	baseName := fileNameWithoutExtension(c.TemplateFile)
+	templateDstName := fmt.Sprintf("%s_%s.%s", baseName, c.TemplateSuffix, extension)
+
+	ui.Say(fmt.Sprintf("Establishing SSH connection at [%s] to get backup...", c.proxmoxURL.Hostname()))
+	SftpClient, err := ConnectSFTP(ui, user.Name, c.Password, c.proxmoxURL.Hostname(), 22)
 	if err != nil {
 		state.Put("error", err)
 		ui.Error(err.Error())
 		return multistep.ActionHalt
 	}
 
+	ui.Say(fmt.Sprintf("Establishing SSH connection at [%s] to get backup...Done", c.proxmoxURL.Hostname()))
+	// open an SFTP session over an existing ssh connection.
+	err = uploadBackup(*client, ui, SftpClient, c.VMID, c.Node, backupSrcPath, c.TemplateStoragePool, templateDstName)
+	if err != nil {
+		state.Put("error", err)
+		ui.Error(err.Error())
+		return multistep.ActionHalt
+	}
+
+	defer SftpClient.Close()
+
+	ui.Say("Finished. Deleting Backup File")
+	err = SftpClient.Remove(backupSrcPath)
+	if err != nil {
+		ui.Error(fmt.Sprintf("Error Backup. Please delete it manually: %s", err))
+
+	}
+	ui.Say("Finished. Deleting Backup File...Done")
+
 	ui.Say("Finished. Deleting LXC Container")
 	_, err = client.DeleteVm(vmRef)
 	if err != nil {
-		ui.Error(fmt.Sprintf("error deleting VM. Please delete it manually: %s", err))
+		ui.Error(fmt.Sprintf("Error deleting VM. Please delete it manually: %s", err))
 	}
+	ui.Say("Finished. Deleting LXC Container... Done")
 
-	state.Put("templatePath", filename)
+	state.Put("templatePath", templateDstName)
 
 	return multistep.ActionContinue
 }
@@ -99,48 +106,11 @@ func (s *stepSaveToTemplate) Cleanup(state multistep.StateBag) {
 		ui.Error(fmt.Sprintf("Error deleting VM. Please delete it manually: %s", err))
 		return
 	}
+	ui.Say("Deleting LXC Container... Done")
 
 }
 
-func findLatestBackup(proxmox_client *proxmox.Client, vmId int, node string, storagePool string) (string, error) {
-	// Get Files List
-	contentList, err := proxmox.ListFiles(proxmox_client, node, storagePool, proxmox.ContentType_Backup)
-	if err != nil {
-		return "", err
-	}
-	var current_vmRefs_backup []proxmox.Content_FileProperties
-	// Apply regex to find all with the right vmRef
-	for _, file := range *contentList {
-
-		if isCurrentvmRef(vmId, file) {
-			current_vmRefs_backup = append(current_vmRefs_backup, file)
-		}
-	}
-	// Sorting by date desc
-	sort.Sort(ByCreationTime(current_vmRefs_backup))
-	// Get full path
-	filedetail, err := proxmox_client.GetItemConfigMapStringInterface("/nodes/"+node+"/storage/"+storagePool+"/content/"+storagePool+":"+string(proxmox.ContentType_Backup)+"/"+current_vmRefs_backup[0].Name, "PATH", "CONFIG")
-	if err != nil {
-		return "", nil
-	}
-	srcFilePath := filedetail["path"].(string)
-	if srcFilePath == "" {
-		return "", fmt.Errorf("could not find backup file for LXC container %d", vmId)
-	}
-
-	return srcFilePath, nil
-}
-
-func isCurrentvmRef(vmId int, file proxmox.Content_FileProperties) bool {
-
-	match, err := regexp.MatchString(`vzdump-lxc-`+strconv.Itoa(vmId)+`-.*?\.tar\.gz`, file.Name)
-	if err != nil {
-		return false
-	}
-	return match
-}
-
-func uploadBackup(prox_client proxmox.Client, ui packersdk.Ui, apiUser string, apiPassword string, apiAddr string, apiPort int, vmId int, node string, templateStoragePool string, templateFile string, templateSuffix string) (string, error) {
+func ConnectSFTP(ui packersdk.Ui, apiUser string, apiPassword string, apiAddr string, apiPort int) (*sftp.Client, error) {
 
 	config := &ssh.ClientConfig{
 		User: apiUser,
@@ -151,74 +121,49 @@ func uploadBackup(prox_client proxmox.Client, ui packersdk.Ui, apiUser string, a
 	}
 
 	var sshAddr string = apiAddr + ":" + strconv.Itoa(apiPort)
-	ui.Say("Establishing SSH connection with [" + apiUser + "] at [" + sshAddr + "] for template file...")
-	client, _ := ssh.Dial("tcp", sshAddr, config)
-	defer client.Close()
 
-	ui.Say("Establishing SFTP connection for template file...")
-	// open an SFTP session over an existing ssh connection.
+	client, _ := ssh.Dial("tcp", sshAddr, config)
 	ftpClient, err := sftp.NewClient(client)
 	if err != nil {
-		return "", err
-	}
-	defer ftpClient.Close()
-
-	ui.Say("Listing vzdump backup directory for template backup...")
-
-	dir := "/var/lib/vz/dump/" // TODO Get from real path
-	files, err := ftpClient.ReadDir(dir)
-	if err != nil {
-		return "", err
-	}
-	var srcFilePath = ""
-	var fileName = ""
-	for _, file := range files {
-		match, err := regexp.MatchString(`vzdump-lxc-`+strconv.Itoa(vmId)+`-.*?\.tar\.gz`, file.Name())
-		if err == nil && match {
-			fileName = file.Name()
-			srcFilePath = path.Join(dir, fileName)
-		}
+		return nil, err
 	}
 
-	if srcFilePath == "" {
-		return "", fmt.Errorf("could not find backup file for LXC container %d", vmId)
-	}
+	return ftpClient, nil
+}
 
-	ui.Say("Opening vzdump template backup " + srcFilePath + "...")
+func uploadBackup(prox_client proxmox.Client, ui packersdk.Ui, ftpClient *sftp.Client, vmId int, node string, srcFilePath string, templateStoragePool string, templateDstName string) error {
+
+	ui.Say(fmt.Sprintf("Opening vzdump template backup %s ...", srcFilePath))
 	srcFile, err := ftpClient.Open(srcFilePath)
 	if err != nil {
-		return "", err
+		return err
 	}
 	defer srcFile.Close()
 
 	ui.Say("Creating temp file to store backup file ...")
 	dstFile, err := os.CreateTemp("", "vztmpl")
 	if err != nil {
-		return "", err
+		return err
 	}
 
-	ui.Say("Transferring vzdump template backup file to local path...")
+	ui.Say("Transferring vzdump data template to local path...")
 	// write to file
 	if _, err := dstFile.ReadFrom(srcFile); err != nil {
-		return "", err
+		return err
 	}
 	defer os.Remove(dstFile.Name())
 
-	// Define new name
-	name := fileNameWithoutExtension(templateFile)
-	templateFile = name + "_" + templateSuffix + strings.ReplaceAll(templateFile, name, "")
-
-	ui.Say("Upload vzdump template backup " + templateFile + " to " + templateStoragePool + " ...")
+	ui.Say(fmt.Sprintf("Upload template %s to %s...", templateDstName, templateStoragePool))
 	isoPath, _ := filepath.EvalSymlinks(dstFile.Name())
 	r, err := os.Open(isoPath)
 	if err != nil {
-		return "", err
+		return err
 	}
-	if err := prox_client.Upload(node, templateStoragePool, "vztmpl", templateFile, r); err != nil {
-		return "", err
+	if err := prox_client.Upload(node, templateStoragePool, "vztmpl", templateDstName, r); err != nil {
+		return err
 	}
 
-	return templateFile, nil
+	return nil
 }
 
 func fileNameWithoutExtension(fileName string) string {
