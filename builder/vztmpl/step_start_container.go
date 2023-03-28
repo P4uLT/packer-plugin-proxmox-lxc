@@ -94,12 +94,12 @@ func (s *stepStartContainer) Run(ctx context.Context, state multistep.StateBag) 
 	ui.Say("Starting LXC Container")
 	//_, err = client.StartVm(vmRef)
 	_, err = client.StartVm(vmRef)
-	if err != nil {
-		err := fmt.Errorf("error starting VM: %s", err)
-		state.Put("error", err)
-		ui.Error(err.Error())
-		return multistep.ActionHalt
-	}
+	// if err != nil {
+	// 	err := fmt.Errorf("error starting VM: %s", err)
+	// 	state.Put("error", err)
+	// 	ui.Error(err.Error())
+	// 	return multistep.ActionHalt
+	// }
 
 	return multistep.ActionContinue
 }

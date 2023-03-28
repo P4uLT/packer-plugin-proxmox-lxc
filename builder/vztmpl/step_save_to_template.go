@@ -7,6 +7,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -24,15 +25,40 @@ import (
 // It sets the template_id state which is used for Artifact lookup.
 type stepSaveToTemplate struct{}
 
+// ByCreationTime implements sort.Interface based on the CreationTime field.
+type ByCreationTime []proxmox.Content_FileProperties
+
+func (a ByCreationTime) Len() int           { return len(a) }
+func (a ByCreationTime) Less(i, j int) bool { return a[i].CreationTime.After(a[j].CreationTime) }
+func (a ByCreationTime) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+
 func (s *stepSaveToTemplate) Run(ctx context.Context, state multistep.StateBag) multistep.StepAction {
 	ui := state.Get("ui").(packersdk.Ui)
 	c := state.Get("config").(*Config)
 	client := state.Get("proxmoxClient").(*proxmox.Client)
 	vmRef := state.Get("vmRef").(*proxmox.VmRef)
 
-	filename, err := uploadBackup(*client, ui, strings.Replace(c.Username, "@pam", "", 1), c.Password, c.proxmoxURL.Hostname(), 22, c.VMID, c.Node, c.TemplateStoragePool, c.TemplateFile, c.TemplateSuffix)
+	ui.Say("Finding latest backup for VmId" + strconv.Itoa(vmRef.VmId()) + "in storage :" + c.BackupStoragePool)
+
+	path, err := findLatestBackup(client, c.VMID, c.Node, c.BackupStoragePool)
 	if err != nil {
-		err := fmt.Errorf("error converting VM to template, failed to upload backup: %s", err)
+		err := fmt.Errorf("error finding latest backup: %s", err)
+		state.Put("error", err)
+		ui.Error(err.Error())
+		return multistep.ActionHalt
+	}
+	ui.Say("Found backup at " + path)
+
+	user, err := proxmox.NewUserID(c.Username)
+	if err != nil {
+		err := fmt.Errorf("error parsing username: %s", err)
+		state.Put("error", err)
+		ui.Error(err.Error())
+		return multistep.ActionHalt
+	}
+
+	filename, err := uploadBackup(*client, ui, user.Name, c.Password, c.proxmoxURL.Hostname(), 22, c.VMID, c.Node, c.TemplateStoragePool, c.TemplateFile, c.TemplateSuffix)
+	if err != nil {
 		state.Put("error", err)
 		ui.Error(err.Error())
 		return multistep.ActionHalt
@@ -76,6 +102,44 @@ func (s *stepSaveToTemplate) Cleanup(state multistep.StateBag) {
 
 }
 
+func findLatestBackup(proxmox_client *proxmox.Client, vmId int, node string, storagePool string) (string, error) {
+	// Get Files List
+	contentList, err := proxmox.ListFiles(proxmox_client, node, storagePool, proxmox.ContentType_Backup)
+	if err != nil {
+		return "", err
+	}
+	var current_vmRefs_backup []proxmox.Content_FileProperties
+	// Apply regex to find all with the right vmRef
+	for _, file := range *contentList {
+
+		if isCurrentvmRef(vmId, file) {
+			current_vmRefs_backup = append(current_vmRefs_backup, file)
+		}
+	}
+	// Sorting by date desc
+	sort.Sort(ByCreationTime(current_vmRefs_backup))
+	// Get full path
+	filedetail, err := proxmox_client.GetItemConfigMapStringInterface("/nodes/"+node+"/storage/"+storagePool+"/content/"+storagePool+":"+string(proxmox.ContentType_Backup)+"/"+current_vmRefs_backup[0].Name, "PATH", "CONFIG")
+	if err != nil {
+		return "", nil
+	}
+	srcFilePath := filedetail["path"].(string)
+	if srcFilePath == "" {
+		return "", fmt.Errorf("could not find backup file for LXC container %d", vmId)
+	}
+
+	return srcFilePath, nil
+}
+
+func isCurrentvmRef(vmId int, file proxmox.Content_FileProperties) bool {
+
+	match, err := regexp.MatchString(`vzdump-lxc-`+strconv.Itoa(vmId)+`-.*?\.tar\.gz`, file.Name)
+	if err != nil {
+		return false
+	}
+	return match
+}
+
 func uploadBackup(prox_client proxmox.Client, ui packersdk.Ui, apiUser string, apiPassword string, apiAddr string, apiPort int, vmId int, node string, templateStoragePool string, templateFile string, templateSuffix string) (string, error) {
 
 	config := &ssh.ClientConfig{
@@ -100,6 +164,7 @@ func uploadBackup(prox_client proxmox.Client, ui packersdk.Ui, apiUser string, a
 	defer ftpClient.Close()
 
 	ui.Say("Listing vzdump backup directory for template backup...")
+
 	dir := "/var/lib/vz/dump/" // TODO Get from real path
 	files, err := ftpClient.ReadDir(dir)
 	if err != nil {
